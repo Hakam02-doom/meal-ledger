@@ -1,4 +1,7 @@
-import Ledger from "./ledger";
-import { getChatGPTUser } from "./chatgpt-auth";
-export const dynamic = "force-dynamic";
-export default async function Home(){const user=await getChatGPTUser();return <Ledger signedIn={!!user} />;}
+import Ledger from './ledger';
+import { getUser } from '../lib/supabase/server';
+export const dynamic = 'force-dynamic';
+export default async function Home() {
+  const user = await getUser();
+  return <Ledger signedIn={!!user} />;
+}
