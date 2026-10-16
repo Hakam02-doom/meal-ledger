@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import {emptyData,newEntry,totals,filteredEntries,DataSchema,demoData} from '../app/model';
+import {importWorkbook,readBackup} from '../app/excel';
+import ExcelJS from 'exceljs';
+const d=emptyData();d.schools=[{id:'s1',name:'Test Primary School',udise:'00123',type:'PRIMARY',cookingOpening:100.10,fruitOpening:50.20}];
+for(const [i,status] of ['Passed','Pending','Failed','Cancelled'].entries())d.entries.push({...newEntry(),id:'e'+i,schoolId:'s1',billNo:'B'+i,date:'2026-04-01',received:10.20,consumed:2.10,status:status as any});
+assert.deepEqual(totals(d,'Cooking'),{opening:100.1,received:10.2,consumed:2.1,balance:108.2});
+assert.equal(totals(d).balance,158.4);assert.equal(totals(d,'Fruit').balance,50.2);
+assert.equal(filteredEntries(d,{status:'Pending'}).length,1);assert.equal(filteredEntries(d,{q:'primary'}).length,4);assert.equal(filteredEntries(d,{from:'2026-04-02'}).length,0);assert.equal(filteredEntries(d,{to:'2026-04-01'}).length,4);
+assert.ok(DataSchema.safeParse(d).success);
+assert.ok(!DataSchema.safeParse({...d,entries:[{...d.entries[0],schoolId:'missing'}]}).success);
+assert.ok(!DataSchema.safeParse({...d,entries:[{...d.entries[0],received:-1}]}).success);
+assert.ok(!DataSchema.safeParse({...d,entries:[{...d.entries[0],received:1.001}]}).success);
+assert.ok(!DataSchema.safeParse({...d,entries:[{...d.entries[0],date:'2026-02-30'}]}).success);
+assert.ok(!DataSchema.safeParse({...d,entries:[d.entries[0],d.entries[0]]}).success);
+assert.ok(DataSchema.safeParse(demoData()).success);
+const wb=new ExcelJS.Workbook();const s=wb.addWorksheet('Schools');s.addRow(['School Name','UDISE','Type','Cooking Opening','Fruit Opening']);s.addRow(['Imported School','000045','PRIMARY',10.25,20.15]);const e=wb.addWorksheet('Entries');e.addRow(['Date','Bill No','School Name','UDISE','Fund','Received','Consumed','Status']);e.addRow(['2026-10-16','B001','Imported School','000045','Cooking Cost Fund',10.1,2.2,'Passed']);const buffer=await wb.xlsx.writeBuffer();const file=new File([buffer as any],'records.xlsx');const imported=await importWorkbook(file,emptyData());assert.equal(imported.added,2);assert.equal(imported.data.schools[0].udise,'000045');assert.equal(totals(imported.data).balance,38.3);const duplicate=await importWorkbook(file,imported.data);assert.equal(duplicate.added,0);assert.equal(duplicate.skipped,2);
+const backup=new File([JSON.stringify({format:'meal-ledger-v1',data:imported.data})],'backup.json');assert.deepEqual(await readBackup(backup),imported.data);
+await assert.rejects(()=>readBackup(new File(['{"format":"bad"}'],'bad.json')));
+s.getCell('D2').value=-1;const bad=new File([await wb.xlsx.writeBuffer() as any],'bad.xlsx');await assert.rejects(()=>importWorkbook(bad,emptyData()));
+console.log('PASS: balances, passed-only accounting, precision, filters, schema integrity, Excel imports, duplicate prevention, backup restore, invalid import rollback.');
+
+// Re-importing a changed amount must not create a second copy of the same bill.
+e.getCell('F2').value=999;
+s.getCell('D2').value=10.25;
+const changedBill=new File([await wb.xlsx.writeBuffer() as any],'changed-bill.xlsx');
+const changedImport=await importWorkbook(changedBill,imported.data);
+assert.equal(changedImport.data.entries.length,1,'Changed amount on an existing bill must not duplicate it');
+assert.equal(changedImport.data.entries[0].received,10.1,'Existing saved bill must stay unchanged during duplicate import');
+assert.equal(filteredEntries(d,{fund:'Fruit'}).length,0);
+assert.equal(filteredEntries(d,{school:'s1',status:'Passed',from:'2026-04-01',to:'2026-04-01'}).length,1);
+assert.equal(filteredEntries(d,{q:'no-match'}).length,0);
+assert.equal(filteredEntries(d,{sort:'oldest'})[0].id,'e0');
+assert.equal(filteredEntries(d,{sort:'newest'})[0].id,'e3');
+console.log('PASS: changed-bill reimport protection, fund/school/date/search filters and stable sorting.');
